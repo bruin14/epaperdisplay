@@ -1,0 +1,142 @@
+- trigger:
+      - platform: time_pattern
+        minutes: "/5"
+    sensor:
+      - name: ePaperDisplay Data
+        state: "OK"
+        attributes:
+          livingroom_temperature: >
+            {{ state_attr('climate.woonkamer','current_temperature') | round(1, "half", default) }}
+          livingroom_humidity: >
+            {{ states('sensor.indoor_humidity') | round(0, default) }}
+          weather_condition_now: >
+            {% set cond_now = states('sensor.buienradar_detailed_condition') %}
+            {% if states('sun.sun') == 'below_horizon' %}
+                {% if cond_now == 'sunny' %} night {% elif cond_now == 'partlycloudy' %} night-partly-cloudy {% else %} {{ cond_now }} {% endif %}
+            {% else %}
+                {{ cond_now }}
+            {% endif %}
+          weather_temperature_now: >
+            {{ states('sensor.carport_sensor_temperature') }}
+          weather_humidity_now: >
+            {{ states('sensor.buienradar_humidity') }}
+          weather_pressure_now: >
+            {{ states('sensor.buienradar_pressure') |round }}
+          weather_day_1d: >
+           {{ (now().date() + timedelta(days=1)).strftime('%A') }}
+          weather_condition_1d: >
+            {% set cond_now = states('sensor.buienradar_detailed_condition_1d') %}
+            {% if states('sun.sun') == 'below_horizon' %}
+                {% if cond_now == 'sunny' %} night {% elif cond_now == 'partlycloudy' %} night-partly-cloudy {% else %} {{ cond_now }} {% endif %}
+            {% else %}
+                {{ cond_now }}
+            {% endif %}
+          weather_temperature_1d: >
+            {{ states('sensor.buienradar_temperature_1d') }}
+          weather_day_2d: >
+           {{ (now().date() + timedelta(days=1)).strftime('%A') }}
+          weather_condition_2d: >
+            {% set cond_now = states('sensor.buienradar_detailed_condition_2d') %}
+            {% if states('sun.sun') == 'below_horizon' %}
+                {% if cond_now == 'sunny' %} night {% elif cond_now == 'partlycloudy' %} night-partly-cloudy {% else %} {{ cond_now }} {% endif %}
+            {% else %}
+                {{ cond_now }}
+            {% endif %}
+          weather_temperature_2d: >
+            {{ states('sensor.buienradar_temperature_2d') }}
+          weather_day_3d: >
+           {{ (now().date() + timedelta(days=2)).strftime('%A') }}
+          weather_condition_3d: >
+            {% set cond_now = states('sensor.buienradar_detailed_condition_3d') %}
+            {% if states('sun.sun') == 'below_horizon' %}
+                {% if cond_now == 'sunny' %} night {% elif cond_now == 'partlycloudy' %} night-partly-cloudy {% else %} {{ cond_now }} {% endif %}
+            {% else %}
+                {{ cond_now }}
+            {% endif %}
+          weather_temperature_3d: >
+            {{ states('sensor.buienradar_temperature_3d') }}
+          weather_day_4d: >
+           {{ (now().date() + timedelta(days=3)).strftime('%A') }}
+          weather_condition_4d: >
+            {% set cond_now = states('sensor.buienradar_detailed_condition_4d') %}
+            {% if states('sun.sun') == 'below_horizon' %}
+                {% if cond_now == 'sunny' %} night {% elif cond_now == 'partlycloudy' %} night-partly-cloudy {% else %} {{ cond_now }} {% endif %}
+            {% else %}
+                {{ cond_now }}
+            {% endif %}
+          weather_temperature_4d: >
+            {{ states('sensor.buienradar_temperature_4d') }}
+          weather_day_5d: >
+           {{ (now().date() + timedelta(days=4)).strftime('%A') }}
+          weather_condition_5d: >
+            {% set cond_now = states('sensor.buienradar_detailed_condition_5d') %}
+            {% if states('sun.sun') == 'below_horizon' %}
+                {% if cond_now == 'sunny' %} night {% elif cond_now == 'partlycloudy' %} night-partly-cloudy {% else %} {{ cond_now }} {% endif %}
+            {% else %}
+                {{ cond_now }}
+            {% endif %}
+          weather_temperature_5d: >
+            {{ states('sensor.buienradar_temperature_5d') }}
+          calendar_afval_event: >
+            {% set today_collection = states("sensor.afvalwijzer_today") %}
+            {%set afvalwijzer = expand("sensor.afvalwijzer_plastic","sensor.afvalwijzer_papier_overdag","sensor.afvalwijzer_gft_afval")%}
+            {%set afvalwijzer=afvalwijzer|sort(attribute='attributes.days_until_collection_date')|map(attribute='attributes.friendly_name')|list%}    
+            {%if today_collection !="None" %}
+               {%if now().strftime('%H.%M') <  '17.00' %}
+                {{ afvalwijzer[0] | replace("afvalwijzer ","") | replace("(overdag)","") }}
+               {% else %}  
+                {{ afvalwijzer[1] | replace("afvalwijzer ","") | replace("(overdag)","") }}
+               {% endif %} 
+             {% else %}
+              {{ afvalwijzer[0] | replace("afvalwijzer ","") | replace("(overdag)","") }}
+            {% endif %} 
+          calendar_afval_txt_days: > 
+            {% set today_collection = states("sensor.afvalwijzer_today") %}
+            {% set afvalwijzer = expand("sensor.afvalwijzer_plastic","sensor.afvalwijzer_papier_overdag","sensor.afvalwijzer_gft_afval")%}
+            {% set afvalwijzer=afvalwijzer|sort(attribute='attributes.days_until_collection_date')|map(attribute='state')|list%}
+            {% set t = now() %}
+            {% set midnight = today_at() %}
+            {%if today_collection != "None" %}
+               {%if now().strftime('%H.%M') <  '17.00' %}
+                  {% set event = strptime(afvalwijzer[0], '%d-%m-%Y') | as_datetime | as_local %}
+               {% else %}  
+                  {% set event = strptime(afvalwijzer[1], '%d-%m-%Y') | as_datetime | as_local %}
+               {% endif %} 
+            {% else %}  
+             {% set event = strptime(afvalwijzer[0], '%d-%m-%Y') | as_datetime | as_local %}
+            {% endif %}
+            {% set delta = event - midnight %}
+            {% if delta.days == 0 %}
+              Today 
+             {% elif delta.days == 1 %}
+              Tomorrow 
+             {% elif delta.days == 2 %}
+              Day after tomorrow             
+             {% else %}
+              in {{ delta.days }} days
+            {% endif %}
+          calendar_family_event: >
+            {% set event = state_attr('calendar.yourgmailhere', 'message')  %}
+            {{ event |truncate(25, True, '...',0)}}
+          calendar_family_txt_days: >          
+            {% set t = now() %}
+            {% set midnight = today_at() %}
+            {% set event = state_attr('calendar.yourgmailhere', 'start_time') | as_datetime | as_local %}
+            {% set delta = event - midnight %}
+            {% if delta.days == 0 %}
+             Today
+            {% elif delta.days == 1 %}
+             Tomorrow
+            {% elif delta.days == 2 %}
+             Day after tomorrow
+            {% else %}
+             in {{ delta.days }} days
+            {% endif %}
+          solar_today: >
+            {{ states('sensor.se_stroom_opwek_per_dag')|round }}
+          power_today: >
+            {{ states('sensor.p1_netto_stroom_verbruik_per_dag')|round(1) }}
+          gas_today: >
+            {{ states('sensor.p1_gas_verbruik_per_dag')|round(1) }}
+          water_today: >
+            {{ ( states('sensor.p1_waterverbruik_per_dag') | float * 1000 ) | round(3) }}
