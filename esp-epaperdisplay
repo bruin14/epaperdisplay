@@ -1,0 +1,869 @@
+esphome:
+  name: "epaperdisplay"
+  friendly_name: "e-PaperDisplay"
+  on_boot:
+      priority: 200.0
+      then:
+        - component.update: eink_display
+        - wait_until:
+            condition:
+              lambda: 'return id(data_updated) == true;'
+              # Wait a bit longer so all the items are received
+        - delay: 5s        
+        - logger.log: "Initial sensor data received: Refreshing display..."
+        - lambda: 'id(initial_data_received) = true;'
+        - script.execute: update_screen
+        - script.execute: consider_deep_sleep
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+
+ota:
+  - platform: esphome
+
+# Wifi information
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  domain: .home.arpa
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: !secret e-PaperDisplay_ap_ssid
+    password: !secret e-PaperDisplay_ap_password
+
+captive_portal:
+
+web_server:
+
+# Global variables for detecting if the display needs to be refreshed. (Thanks @paviro!)
+globals:
+  - id: data_updated
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: initial_data_received
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  - id: recorded_display_refresh
+    type: int
+    restore_value: yes
+    initial_value: '0'
+
+button:
+  - platform: shutdown
+    name: "Shutdown"
+  - platform: restart
+    name: "Restart"
+  - platform: template
+    name: "Refresh Screen"
+    entity_category: config
+    on_press:
+      - script.execute: update_screen
+
+# Script for updating screen - Refresh display and publish refresh count and time. (Thanks @paviro!)
+script:
+  - id: update_screen
+    then:
+      - lambda: 'id(data_updated) = false;'
+      - component.update: eink_display
+      - lambda: 'id(recorded_display_refresh) += 1;'
+      - lambda: 'id(display_last_update).publish_state(id(homeassistant_time).now().timestamp);'
+
+  - id: consider_deep_sleep
+    mode: queued
+    then:
+      - delay: 60s
+      - if:
+          condition:
+            binary_sensor.is_on: prevent_deep_sleep
+          then:
+            - logger.log: 'Deep sleep disabled, skipping sleep..'
+          else:
+            - logger.log: "Deep sleep enabled, going to sleep. Bye!"
+            - deep_sleep.enter:  deep_sleep_control            
+
+      - script.execute: consider_deep_sleep
+
+time:
+  - platform: sntp
+    id: ntp
+    timezone: Europe/Amsterdam
+    servers:
+      - 0.pool.ntp.org
+      - 1.pool.ntp.org
+      - 2.pool.ntp.org   
+  - platform: homeassistant
+    id: homeassistant_time
+    on_time:
+      - seconds: 0
+        minutes: /60
+        then:
+          - if:
+              condition:
+                lambda: 'return id(data_updated) == true;'
+              then:
+                - logger.log: "Sensor data updated. Refreshing display..."
+                - script.execute: update_screen                
+              else:
+                - logger.log: "No sensors updated - skipping display refresh."
+
+      # Every evening after 23:00
+      - hours: 23
+        then:
+          - logger.log: "Going for a sleep during the night. Good night!"   
+          - deep_sleep.enter:
+              id: deep_sleep_control
+              until: "6:00:00"
+              time_id: ntp         
+
+# Pins for Waveshare ePaper ESP Board
+spi:
+  clk_pin: GPIO13
+  mosi_pin: GPIO14
+
+# Deep Sleep ###################################################################
+deep_sleep:
+  id: deep_sleep_control
+  sleep_duration: 60min
+
+font:
+  - file: "fonts/GoogleSans-Medium.ttf"
+    id: xtra_large_font
+    size: 80
+    glyphs:
+      [ '-', '.','°', '0','1', '2', '3', '4', '5', '6', '7', '8', '9']
+  - file: "fonts/GoogleSans-Medium.ttf"
+    id: large_font
+    size: 56
+    glyphs:
+      ['&', '@', '!', ',', '.', '"', '%', '(', ')', '+', '-', '_', ':', '°', '0',
+       '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E',
+       'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S',
+       'T', 'U', 'V', 'W', 'X', 'Y', 'Z', ' ', 'a', 'b', 'c', 'd', 'e', 'f',
+       'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't',
+       'u', 'v', 'w', 'x', 'y', 'z','å', 'ä', 'ö', '/', '³','ë']
+  - file: "fonts/GoogleSans-Bold.ttf"
+    id: medium_fontb
+    size: 36
+    glyphs:
+      ['&', '@', '!', ',', '.', '"', '%', '(', ')', '+', '-', '_', ':', '°', '0',
+       '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E',
+       'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S',
+       'T', 'U', 'V', 'W', 'X', 'Y', 'Z', ' ', 'a', 'b', 'c', 'd', 'e', 'f',
+       'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't',
+       'u', 'v', 'w', 'x', 'y', 'z', 'å', 'ä', 'ö', '/','³','ë']
+  - file: "fonts/GoogleSans-Medium.ttf"
+    id: medium_fontm
+    size: 40
+    glyphs:
+      ['&', '@', '!', ',', '.', '"', '%', '(', ')', '+', '-', '_', ':', '°', '0',
+       '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E',
+       'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S',
+       'T', 'U', 'V', 'W', 'X', 'Y', 'Z', ' ', 'a', 'b', 'c', 'd', 'e', 'f',
+       'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't',
+       'u', 'v', 'w', 'x', 'y', 'z', 'å', 'ä', 'ö', '/','³','ë']
+  - file: "fonts/GoogleSans-Medium.ttf"
+    id: small_font
+    size: 26
+    glyphs:
+      ['&', '@', '!', ',', '.', '"', '%', '(', ')', '+', '-', '_', ':', '°', '0',
+       '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E',
+       'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S',
+       'T', 'U', 'V', 'W', 'X', 'Y', 'Z', ' ', 'a', 'b', 'c', 'd', 'e', 'f',
+       'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't',
+       'u', 'v', 'w', 'x', 'y', 'z', 'å', 'ä', 'ö', '/','³','ë']
+  - file: "fonts/GoogleSans-Medium.ttf"
+    id: xtra_small_font
+    size: 18
+    glyphs:
+      ['&', '@', '!', ',', '.', '"', '%', '(', ')', '+', '-', '_', ':', '°', '0',
+       '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E',
+       'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S',
+       'T', 'U', 'V', 'W', 'X', 'Y', 'Z', ' ', 'a', 'b', 'c', 'd', 'e', 'f',
+       'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't',
+       'u', 'v', 'w', 'x', 'y', 'z', 'å', 'ä', 'ö', '/','³','ë']
+
+    # https://pictogrammers.github.io/@mdi/font/5.3.45/
+  - file: "fonts/materialdesignicons-webfont.ttf"
+    id: font_icons_small
+    size: 26
+    glyphs:
+      - "\U000F140B" # Energy
+      - "\U000F0E1B" # Car
+      - "\U000F03C7" # Car oil
+      - "\U000F010C" # Car battery
+      - "\U000F07CA" # mdi-fuel
+      - "\U000F109D" # Car doors closed
+      - "\U000F0B6B" # Car doors open
+      - "\U000F05B1" # Car windows open
+      - "\U000F05AE" # Car windows closed
+      - "\U000F029A" # mdi-gauge
+      - "\U000F058E" # mdi-water-percent
+      - "\U000F07E4" # mdi-molecule-co2
+      - "\U000F12A6" # battery-charging-high
+      - "\U000F0E17" # calendar-month
+
+  - file: "fonts/materialdesignicons-webfont.ttf"
+    id: font_icons_medium
+    size: 36
+    glyphs:
+      - "\U000F10C2" # Temperature High
+      - "\U000F10C3" # Temperature Low
+      - "\U000F1A71" # mdi-snowflake-thermometer
+      - "\U000F050F" # mdi-thermometer
+      - "\U000F029A" # mdi-gauge
+      - "\U000F058E" # mdi-water-percent
+      - "\U000F07E4" # mdi-molecule-co2
+      - "\U000F059D" # mdi-weather-windy
+      - "\U000F04E0" # mdi-sunglasses      
+      - "\U000F0E17" # calendar-month
+  
+# Include Material Design Icons font
+  # Thanks to https://community.home-assistant.io/t/display-materialdesign-icons-on-esphome-attached-to-screen/199790/16
+  - file: 'fonts/materialdesignicons-webfont.ttf'
+    id: font_mdi_large
+    size: 80
+    glyphs: &mdi-weather-glyphs
+      - "\U000F0590" # mdi-weather-cloudy
+      - "\U000F0F2F" # mdi-weather-cloudy-alert
+      - "\U000F0E6E" # mdi-weather-cloudy-arrow-right
+      - "\U000F0591" # mdi-weather-fog
+      - "\U000F0592" # mdi-weather-hail
+      - "\U000F0F30" # mdi-weather-hazy
+      - "\U000F0898" # mdi-weather-hurricane
+      - "\U000F0593" # mdi-weather-lightning
+      - "\U000F067E" # mdi-weather-lightning-rainy
+      - "\U000F0594" # mdi-weather-night
+      - "\U000F0F31" # mdi-weather-night-partly-cloudy
+      - "\U000F0595" # mdi-weather-partly-cloudy
+      - "\U000F0F32" # mdi-weather-partly-lightning
+      - "\U000F0F33" # mdi-weather-partly-rainy
+      - "\U000F0F34" # mdi-weather-partly-snowy
+      - "\U000F0F35" # mdi-weather-partly-snowy-rainy
+      - "\U000F0596" # mdi-weather-pouring
+      - "\U000F0597" # mdi-weather-rainy
+      - "\U000F0598" # mdi-weather-snowy
+      - "\U000F0F36" # mdi-weather-snowy-heavy
+      - "\U000F067F" # mdi-weather-snowy-rainy
+      - "\U000F0599" # mdi-weather-sunny
+      - "\U000F0F37" # mdi-weather-sunny-alert
+      - "\U000F14E4" # mdi-weather-sunny-off
+      - "\U000F059A" # mdi-weather-sunset
+      - "\U000F059B" # mdi-weather-sunset-down
+      - "\U000F059C" # mdi-weather-sunset-up
+      - "\U000F0F38" # mdi-weather-tornado
+      - "\U000F059D" # mdi-weather-windy
+      - "\U000F059E" # mdi-weather-windy-variant
+      - "\U000F06CC" # mdi delete-empty
+      - "\U000F0A72" # solar-power
+      - "\U000F051F" # timer-sand
+
+  - file: 'fonts/materialdesignicons-webfont.ttf'
+    id: font_mdi_extra_large
+    size: 190
+    glyphs: &mdi-loading-glyphs    
+      - "\U000F051F" # timer-sand  
+
+sensor:
+  #ADC sensor for battery level sensor
+  - platform: adc
+    name: ADC
+    icon: mdi:flash
+    id: idADC
+    pin: GPIO32
+    attenuation: 11db
+    update_interval: 10s
+    accuracy_decimals: 3
+    internal: false #Hide - true \show - false
+    filters:
+      - clamp: 
+          max_value: 1.50
+      - median:
+         window_size: 5
+         send_every: 5
+         send_first_at: 2
+
+#Battery level sensor
+  - platform: copy
+    name: Battery Level
+    icon: mdi:battery
+    id: idBatteryLevel
+    source_id: idADC
+    device_class: battery
+    unit_of_measurement: '%'
+    accuracy_decimals: 0
+    filters:           
+      - calibrate_linear:
+          # The battery voltage should not be lower than 2.7V and higher than 4.2V. To get
+          # into the range 0-2500 you need to use a divider to reduce the voltage to 2.4V and
+          # specify attenuation: 11db
+          # A divider of resistors 220kOhm and 220kOhm is used
+          - 1.375 -> 0
+          - 1.500 -> 100
+
+  # Create Battery sensors voltage
+  - platform: copy
+    name: "Battery Voltage"
+    icon: mdi:flash
+    id: idBatteryVoltage
+    source_id: idADC
+    accuracy_decimals: 3
+    filters:
+      - multiply: 2
+
+  # Create sensors for monitoring e-PaperDisplay remotely.
+  - platform: template
+    name: "Display Last Update"
+    device_class: timestamp
+    entity_category: "diagnostic"
+    id: display_last_update
+    
+  - platform: template
+    name: "Recorded Display Refresh"
+    accuracy_decimals: 0
+    unit_of_measurement: "Refreshes"
+    state_class: "total_increasing"
+    entity_category: "diagnostic"
+    lambda: 'return id(recorded_display_refresh);'
+  
+  - platform: wifi_signal
+    name: "WiFi Signal Strength"
+    id: wifisignal
+    unit_of_measurement: "dBm"
+    entity_category: "diagnostic"
+    update_interval: 60s
+    
+  # Number sensors for Buienradar
+  - platform: homeassistant
+    entity_id: sensor.epaperdisplay_data
+    attribute: weather_temperature_now
+    id: weather_temperature_now
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'  
+        
+  - platform: homeassistant
+    entity_id: sensor.epaperdisplay_data
+    id: weather_humidity_now
+    attribute: weather_humidity_now
+    unit_of_measurement: "%"
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'
+
+  - platform: homeassistant
+    entity_id: sensor.epaperdisplay_data
+    id: weather_pressure_now
+    attribute: weather_pressure_now
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'
+        
+  - platform: homeassistant
+    entity_id: sensor.buienradar_wind_force
+    id: br_wind_force
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'
+        
+  - platform: homeassistant
+    entity_id: weather.buienradar
+    id: br_wind_speed
+    attribute: wind_speed
+    unit_of_measurement: "km/h"
+    state_class: "measurement"
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'
+        
+  # Sensors home
+  - platform: homeassistant
+    id: livingroom_temperature
+    entity_id: sensor.epaperdisplay_data
+    attribute: livingroom_temperature
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'        
+         
+  - platform: homeassistant
+    id: livingroom_humidity
+    entity_id: sensor.epaperdisplay_data
+    attribute: livingroom_humidity
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'
+ 
+  # Sensors buienradar
+  - platform: homeassistant    
+    id: weather_temperature_1d    
+    entity_id: sensor.epaperdisplay_data
+    attribute: weather_temperature_1d    
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'  
+
+  - platform: homeassistant    
+    id: weather_temperature_2d    
+    entity_id: sensor.epaperdisplay_data
+    attribute: weather_temperature_2d    
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'                              
+
+  - platform: homeassistant    
+    id: weather_temperature_3d
+    entity_id: sensor.epaperdisplay_data
+    attribute: weather_temperature_3d
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;' 
+
+  - platform: homeassistant    
+    id: weather_temperature_4d    
+    entity_id: sensor.epaperdisplay_data
+    attribute: weather_temperature_4d    
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'         
+
+  - platform: homeassistant    
+    id: weather_temperature_5d    
+    entity_id: sensor.epaperdisplay_data
+    attribute: weather_temperature_5d    
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'                 
+
+  # Sensors energy
+  - platform: homeassistant    
+    id: solar_today
+    entity_id: sensor.epaperdisplay_data
+    attribute: solar_today
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'     
+
+  - platform: homeassistant    
+    id: gas_today
+    entity_id: sensor.epaperdisplay_data
+    attribute: gas_today
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'      
+         
+  - platform: homeassistant    
+    id: water_today
+    entity_id: sensor.epaperdisplay_data
+    attribute: water_today
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'  
+
+  - platform: homeassistant    
+    id: power_today
+    entity_id: sensor.epaperdisplay_data
+    attribute: power_today
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'        
+
+text_sensor:
+  # sun/moon
+  - platform: homeassistant
+    entity_id: sun.sun
+    id: sun
+    internal: true
+
+  - platform: homeassistant
+    id: weather_condition_now
+    entity_id: sensor.epaperdisplay_data
+    attribute: weather_condition_now
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'
+
+  - platform: homeassistant    
+    id: weather_day_1d
+    entity_id: sensor.epaperdisplay_data
+    attribute: weather_day_1d
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'       
+
+  - platform: homeassistant    
+    id: weather_condition_1d
+    entity_id: sensor.epaperdisplay_data
+    attribute: weather_condition_1d
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'             
+
+  - platform: homeassistant    
+    id: weather_day_2d
+    entity_id: sensor.epaperdisplay_data
+    attribute: weather_day_2d
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'     
+  
+  - platform: homeassistant    
+    id: weather_condition_2d
+    entity_id: sensor.epaperdisplay_data
+    attribute: weather_condition_2d
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'    
+
+  - platform: homeassistant    
+    id: weather_day_3d
+    entity_id: sensor.epaperdisplay_data
+    attribute: weather_day_3d
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'     
+
+  - platform: homeassistant    
+    id: weather_condition_3d
+    entity_id: sensor.epaperdisplay_data
+    attribute: weather_condition_3d
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'       
+      
+  - platform: homeassistant    
+    id: weather_day_4d
+    entity_id: sensor.epaperdisplay_data
+    attribute: weather_day_4d
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'     
+
+  - platform: homeassistant    
+    id: weather_condition_4d
+    entity_id: sensor.epaperdisplay_data
+    attribute: weather_condition_4d
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'            
+
+  - platform: homeassistant    
+    id: weather_day_5d
+    entity_id: sensor.epaperdisplay_data
+    attribute: weather_day_5d
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'     
+
+  - platform: homeassistant    
+    id: weather_condition_5d
+    entity_id: sensor.epaperdisplay_data
+    attribute: weather_condition_5d
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'            
+
+  - platform: homeassistant
+    entity_id: sensor.wind_direction
+    id: br_windrichting
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'
+
+  # Afvalsensors
+  - platform: homeassistant
+    entity_id: sensor.epaperdisplay_data
+    id: calendar_afval_event
+    attribute: calendar_afval_event
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'      
+        
+  - platform: homeassistant
+    entity_id: sensor.epaperdisplay_data
+    id: calendar_afval_txt_days
+    attribute: calendar_afval_txt_days
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;' 
+  
+  - platform: homeassistant
+    entity_id: sensor.epaperdisplay_data
+    id: afval_next_1
+    attribute: afval_next_1
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'      
+  
+  - platform: homeassistant
+    entity_id: sensor.epaperdisplay_data
+    id: afval_next_date_1
+    attribute: afval_next_date_1
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'      
+  
+  - platform: homeassistant
+    entity_id: sensor.epaperdisplay_data
+    id: calendar_family_event
+    attribute: calendar_family_event
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'      
+        
+  - platform: homeassistant
+    entity_id: sensor.epaperdisplay_data
+    id: calendar_family_txt_days
+    attribute: calendar_family_txt_days
+    internal: true
+    on_value:
+      then:
+        - lambda: 'id(data_updated) = true;'               
+
+binary_sensor:
+  - platform: homeassistant
+    id: prevent_deep_sleep
+    entity_id: input_boolean.prevent_deep_sleep
+    on_press:
+       then:
+          - deep_sleep.prevent: deep_sleep_control
+
+# Define colors
+# This design is white on black so this is necessary.
+color:
+  - id: color_bg
+    red: 0%
+    green: 0%
+    blue: 0%
+    white: 0%
+  - id: color_text
+    red: 0%
+    green: 0%
+    blue: 0%
+    white: 100%
+
+# Now render everything on the ePaper screen.    
+display:
+  - platform: waveshare_epaper
+    id: eink_display
+    cs_pin: GPIO15
+    dc_pin: GPIO27
+    #busy_pin: GPIO25
+    busy_pin: 
+      number: GPIO25
+      inverted: true
+    reset_pin: GPIO26
+    reset_duration: 2ms
+    model: 7.50inV2alt
+    # model: 7.50inV2
+    update_interval: never
+    rotation: 270°
+    lambda: |-
+      #define xres 480 
+      #define yres 800
+      #define x_pad 20                        // border padding
+      #define y_pad 20                        // border padding      
+      // #define val_pad 70                      // padding before value
+      // #define icon_y_pad 8                    // padding after icons      
+      #define y_header_weather 60             // y-position weather widget
+      #define y_header_forecast 260           // y-position forcast widget
+      #define y_header_home 450               // y-position home widget
+      #define y_header_energy 640             // y-position energy widget
+      #define weather_icon_x xres/4-x_pad
+
+      // Map weather states to MDI characters.
+      std::map<std::string, std::string> weather_icon_map
+        {
+          {"clear", "\U000F0599"},
+          {"cloudy", "\U000F0590"},
+          {"cloudy-alert", "\U000F0F2F"},
+          {"cloudy-arrow-right", "\U000F0E6E"},
+          {"fog", "\U000F0591"},
+          {"hail", "\U000F0592"},
+          {"hazy", "\U000F0F30"},
+          {"hurricane", "\U000F0898"},
+          {"lightning", "\U000F0593"},
+          {"lightning-rainy", "\U000F067E"},
+          {"night", "\U000F0594"},
+          {"night-partly-cloudy", "\U000F0F31"},
+          {"partlycloudy", "\U000F0595"},
+          {"partly-lightning", "\U000F0F32"},
+          {"partly-rainy", "\U000F0F33"},
+          {"partlycloudy-light-rain", "\U000F0F33"},
+          {"partly-snowy", "\U000F0F34"},
+          {"partly-snowy-rainy", "\U000F0F35"},
+          {"pouring", "\U000F0596"},
+          {"rainy", "\U000F0597"},
+          {"snowy", "\U000F0598"},
+          {"snowy-heavy", "\U000F0F36"},
+          {"snowy-rainy", "\U000F067F"},
+          {"sunny", "\U000F0599"},
+          {"sunny-alert", "\U000F0F37"},
+          {"sunny-off", "\U000F14E4"},
+          {"sunset", "\U000F059A"},
+          {"sunset-down", "\U000F059B"},
+          {"sunset-up", "\U000F059C"},
+          {"tornado", "\U000F0F38"},
+          {"windy", "\U000F059D"},
+          {"windy-variant", "\U000F059E"},
+        };
+            
+      // int y = 10;     
+      
+      
+      if(isnan(id(weather_temperature_now).state))
+        {
+          // Check if we have data from home assistant          
+          it.printf(240, 300, id(font_mdi_extra_large), TextAlign::TOP_CENTER, "\U000F051F");
+          it.printf(240, 500, id(small_font), TextAlign::TOP_CENTER, "Loading data....");
+        }
+      else
+        {           
+          // ==== Weather widget ====
+          it.printf(x_pad, y_header_weather, id(medium_fontb), TextAlign::BASELINE_LEFT, "Weather");
+          it.line(x_pad+170, y_header_weather-10, xres-x_pad, y_header_weather-10);
+          
+          // Battery level
+          it.printf(xres-x_pad-50, y_header_weather-12, id(font_icons_small), TextAlign::BASELINE_RIGHT, "\U000F12A6");
+          it.printf(xres-x_pad, y_header_weather-12, id(xtra_small_font), TextAlign::BASELINE_RIGHT, "%2.0f%%", id(idBatteryLevel).state);
+      
+          // Outside temperature
+          it.printf(xres-x_pad, y_header_weather+70, id(xtra_large_font), TextAlign::BASELINE_RIGHT, "%2.1f°", id(weather_temperature_now).state);
+
+          // outside humidity
+          it.printf(x_pad, y_header_weather+50, id(font_icons_medium), TextAlign::BASELINE_LEFT, "\U000F058E");
+          it.printf(x_pad+40, y_header_weather+50, id(medium_fontm), TextAlign::BASELINE_LEFT, "%2.0f%%", id(weather_humidity_now).state);
+
+          // Pressure
+          it.printf(x_pad, y_header_weather+95, id(font_icons_medium), TextAlign::BASELINE_LEFT, "\U000F029A");
+          it.printf(x_pad+40, y_header_weather+95, id(medium_fontm), TextAlign::BASELINE_LEFT, "%4.0f hPa", id(weather_pressure_now).state);
+
+          // Wind
+          it.printf(x_pad, y_header_weather+140, id(font_icons_medium), TextAlign::BASELINE_LEFT, "\U000F059D");
+          it.printf(x_pad+40, y_header_weather+140, id(medium_fontm), TextAlign::BASELINE_LEFT, "(%1.0f)", id(br_wind_force).state);
+          it.printf(x_pad+100, y_header_weather+140, id(medium_fontm), TextAlign::BASELINE_LEFT, "%2.1f km/h", id(br_wind_speed).state);
+
+          // Wind direction
+          //it.printf(xres-x_pad-10, y_header_weather+195, id(medium_fontm), TextAlign::BASELINE_RIGHT, "%s", id(br_windrichting).state.c_str());
+
+          // Main weather icon
+          it.printf(xres-x_pad, y_header_weather+140, id(font_mdi_large), color_text, TextAlign::BASELINE_RIGHT, "%s", weather_icon_map[id(weather_condition_now).state.c_str()].c_str());
+
+          // ==== Forecast widget ====
+          it.printf(x_pad, y_header_forecast, id(medium_fontb), TextAlign::BASELINE_LEFT, "Forecast");
+          it.line(x_pad+175, y_header_forecast-10, xres-x_pad, y_header_forecast-10);
+          // Tomorrow
+          it.printf(80, (y_header_forecast+10), id(xtra_small_font), color_text, TextAlign::TOP_CENTER, "%s", id(weather_day_2d).state.c_str());
+          it.printf(80, (y_header_forecast+30), id(font_mdi_large), color_text, TextAlign::TOP_CENTER, "%s", weather_icon_map[id(weather_condition_2d).state.c_str()].c_str());
+          it.printf(80, (y_header_forecast+110), id(small_font), color_text, TextAlign::TOP_CENTER, "%2.0f°C", id(weather_temperature_2d).state);
+
+          it.printf(185, (y_header_forecast+10), id(xtra_small_font), color_text, TextAlign::TOP_CENTER, "%s", id(weather_day_3d).state.c_str());
+          it.printf(185, (y_header_forecast+30), id(font_mdi_large), color_text, TextAlign::TOP_CENTER, "%s", weather_icon_map[id(weather_condition_3d).state.c_str()].c_str());
+          it.printf(185, (y_header_forecast+110), id(small_font), color_text, TextAlign::TOP_CENTER, "%2.0f°C", id(weather_temperature_3d).state);
+
+          it.printf(295, (y_header_forecast+10), id(xtra_small_font), color_text, TextAlign::TOP_CENTER, "%s", id(weather_day_4d).state.c_str());
+          it.printf(295, (y_header_forecast+30), id(font_mdi_large), color_text, TextAlign::TOP_CENTER, "%s", weather_icon_map[id(weather_condition_4d).state.c_str()].c_str());
+          it.printf(295, (y_header_forecast+110), id(small_font), color_text, TextAlign::TOP_CENTER, "%2.0f°C", id(weather_temperature_4d).state);
+
+          it.printf(400, (y_header_forecast+10), id(xtra_small_font), color_text, TextAlign::TOP_CENTER, "%s", id(weather_day_5d).state.c_str());
+          it.printf(400, (y_header_forecast+30), id(font_mdi_large), color_text, TextAlign::TOP_CENTER, "%s", weather_icon_map[id(weather_condition_5d).state.c_str()].c_str());
+          it.printf(400, (y_header_forecast+110), id(small_font), color_text, TextAlign::TOP_CENTER, "%.0f°C", id(weather_temperature_5d).state);
+         
+          // ==== Home widget ====
+          it.printf(x_pad, y_header_home, id(medium_fontb), TextAlign::BASELINE_LEFT, "Home");
+          it.line(x_pad+175, y_header_home-10, xres-x_pad, y_header_home-10);
+
+          it.printf(x_pad, y_header_home+30, id(xtra_small_font), TextAlign::BASELINE_LEFT, "Living room");
+
+          // Living room temperature
+          it.printf(x_pad, y_header_home+70, id(font_icons_medium), TextAlign::BASELINE_LEFT, "\U000F050F");
+          it.printf(x_pad+40, y_header_home+70, id(medium_fontm), TextAlign::BASELINE_LEFT, "%2.1f°", id(livingroom_temperature).state); 
+
+          // Living room humidity
+          it.printf(x_pad, y_header_home+115, id(font_icons_medium), TextAlign::BASELINE_LEFT, "\U000F058E");
+          it.printf(x_pad+40, y_header_home+115, id(medium_fontm), TextAlign::BASELINE_LEFT, "%2.0f%%", id(livingroom_humidity).state);                          
+
+          // Afval calendar
+          it.printf(x_pad+175, y_header_home+30, id(xtra_small_font), TextAlign::BASELINE_LEFT, "Family calendar");
+          it.printf(x_pad+195, y_header_home+30, id(font_mdi_large), TextAlign::TOP_CENTER, "\U000F06CC"); 
+          it.printf(x_pad+230, y_header_home+70, id(medium_fontm), TextAlign::BASELINE_LEFT, "%s", id(calendar_afval_event).state.c_str());                    
+          it.printf(x_pad+230, y_header_home+100, id(xtra_small_font), TextAlign::BASELINE_LEFT, "%s", id(calendar_afval_txt_days).state.c_str());
+          
+          // Calendar
+          it.printf(x_pad+170, y_header_home+150, id(font_icons_medium), TextAlign::BASELINE_LEFT, "\U000F0E17");
+          it.printf(x_pad+230, y_header_home+135, id(xtra_small_font), TextAlign::BASELINE_LEFT, "%s", id(calendar_family_event).state.c_str());                    
+          it.printf(x_pad+230, y_header_home+155, id(xtra_small_font), TextAlign::BASELINE_LEFT, "%s", id(calendar_family_txt_days).state.c_str());  
+          
+          // ==== Energie widget ====
+          it.printf(x_pad, y_header_energy, id(medium_fontb), TextAlign::BASELINE_LEFT, "Energy");
+          it.line(x_pad+175, y_header_energy-10, xres-x_pad, y_header_energy-10);  
+          
+          // Solar
+          it.printf(80, y_header_energy+10, id(xtra_small_font), TextAlign::TOP_CENTER, "Solar");
+          it.printf(80, (y_header_energy+30), id(medium_fontm), color_text, TextAlign::TOP_CENTER, "%2.0f", id(solar_today).state);
+          it.printf(80, y_header_energy+70, id(xtra_small_font), TextAlign::TOP_CENTER, "kWh");
+
+          // Power
+          it.printf(185, y_header_energy+10, id(xtra_small_font), TextAlign::TOP_CENTER, "Power");
+          it.printf(185, (y_header_energy+30), id(medium_fontm), color_text, TextAlign::TOP_CENTER, "%2.1f", id(power_today).state);
+          it.printf(185, y_header_energy+70, id(xtra_small_font), TextAlign::TOP_CENTER, "kWh");
+
+          // Gas
+          it.printf(295, y_header_energy+10, id(xtra_small_font), TextAlign::TOP_CENTER, "Gas");
+          it.printf(295, (y_header_energy+30), id(medium_fontm), color_text, TextAlign::TOP_CENTER, "%2.1f", id(gas_today).state);
+          it.printf(295, y_header_energy+70, id(xtra_small_font), TextAlign::TOP_CENTER, "m³");
+
+          // Water
+          it.printf(400, y_header_energy+10, id(xtra_small_font), TextAlign::TOP_CENTER, "Water");
+          it.printf(400, (y_header_energy+30), id(medium_fontm), color_text, TextAlign::TOP_CENTER, "%2.0f", id(water_today).state);           
+          it.printf(400, y_header_energy+70, id(xtra_small_font), TextAlign::TOP_CENTER, "Liter");
+          
+          // Footer
+          it.line(x_pad, yres-y_pad-20, xres-x_pad, yres-y_pad-20);           
+          // Show date and time of last update
+          it.strftime((xres/2), yres-y_pad, id(xtra_small_font), TextAlign::BASELINE_CENTER, "Last update: %A %d %b %Y  %H:%M", id(ntp).now());               
+         }     
+
+      
